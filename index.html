@@ -1344,27 +1344,71 @@ async function fbPullAll() {
   }
 }
 async function fbPushAll() {
-  if(!fbConfig.dbUrl){ showToast('❌ Firebase URL not set!','#f85149'); return; }
-  showToast('🔄 Pushing to Firebase...','#d29922');
+  // ── Pre-flight checks ──
+  if(!fbConfig.dbUrl) {
+    showToast('❌ Firebase URL not set! Setup first.','#f85149');
+    return;
+  }
+  if(staffList.length === 0) {
+    showToast('⚠️ Staff list empty! Pull from GS first.','#d29922');
+    // Still push empty data to confirm connection
+  }
+
+  const dbUrl = fbConfig.dbUrl.replace(/\/+$/, '');
+  showToast('🔄 Pushing ' + staffList.length + ' staff...','#d29922');
+  showSyncInfo('🔄 Pushing to: ' + dbUrl.slice(8,40) + '...');
+
   try {
-    const sk = s => s.replace(/[.#$\[\]]/g,'-');
-    const staffObj={}, leaveObj={}, otObj={}, projObj={}, userObj={};
-    staffList.forEach(s   => { staffObj[sk(s.id)] = s; });
-    leaveList.forEach((l,i)=> { leaveObj['lv'+(l.id||i)] = l; });
-    otList.forEach((o,i)   => { otObj['ot'+(o.id||i)] = o; });
-    projectList.forEach(p  => { projObj[sk(p.id)] = p; });
+    // Build data objects
+    const sk = s => String(s||'').replace(/[.#$[\]]/g,'-');
+    const staffObj = {}, leaveObj = {}, otObj = {}, projObj = {}, userObj = {};
+    staffList.forEach(s    => { if(s.id) staffObj[sk(s.id)] = s; });
+    leaveList.forEach((l,i)=> { leaveObj['lv'+i] = l; });
+    otList.forEach((o,i)   => { otObj['ot'+i] = o; });
+    projectList.forEach(p  => { if(p.id) projObj[sk(p.id)] = p; });
     userList.forEach((u,i) => { userObj['u'+i] = u; });
-    await fbPut('hr', {
-      staff: staffObj, attendance: attendanceData,
-      leave: leaveObj, ot: otObj,
-      projects: projObj, users: userObj
+
+    const payload = {
+      staff:      staffObj,
+      attendance: attendanceData || {},
+      leave:      leaveObj,
+      ot:         otObj,
+      projects:   projObj,
+      users:      userObj,
+      _meta: {
+        pushedAt:   new Date().toISOString(),
+        staffCount: staffList.length,
+        version:    '2.0'
+      }
+    };
+
+    // Direct fetch to Firebase REST API
+    const pushUrl = dbUrl + '/hr.json' + (fbConfig.apiKey ? '?auth=' + fbConfig.apiKey : '');
+    const res = await fetch(pushUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
     });
-    fbConfig.connected = true; lsSet('hr_fb', fbConfig);
-    updateGsStatus();
-    showToast('✅ Firebase Push OK! Staff:' + staffList.length);
-    showSyncInfo('✅ Push — ' + new Date().toLocaleTimeString());
+
+    if(res.ok) {
+      const result = await res.json();
+      fbConfig.connected = true;
+      lsSet('hr_fb', fbConfig);
+      updateGsStatus();
+      showToast('✅ Push OK! ' + staffList.length + ' staff → Firebase');
+      showSyncInfo('✅ Push ' + new Date().toLocaleTimeString() + ' | Staff:' + staffList.length);
+    } else {
+      const errText = await res.text();
+      showToast('❌ Firebase HTTP ' + res.status + ': ' + errText.slice(0,60), '#f85149');
+      showSyncInfo('❌ Push failed: HTTP ' + res.status);
+    }
   } catch(e) {
-    showToast('❌ Push Error: ' + e.message, '#f85149');
+    if(e.message.includes('fetch') || e.message.includes('network') || e.message.includes('Failed')) {
+      showToast('❌ Network Error — ពិនិត្យ Internet + Firebase URL','#f85149');
+    } else {
+      showToast('❌ Push Error: ' + e.message.slice(0,80),'#f85149');
+    }
+    showSyncInfo('❌ Error: ' + e.message.slice(0,50));
   }
 }
 function smartPull() { if(useFirebase) fbPullAll(); else pullFromGoogleSheet(); }
