@@ -1254,7 +1254,63 @@ function doPost(e) {
 
 <div id="toast">✅ រក្សាទុកបានជោគជ័យ!</div>
 
-<script>
+<script>async function fbPushAll() {
+  if(!fbConfig.dbUrl){ showToast('❌ Firebase URL not set!','#f85149'); return; }
+  const dbUrl = fbConfig.dbUrl.replace(/\/+$/, '');
+  const auth  = fbConfig.apiKey ? '?auth=' + fbConfig.apiKey : '';
+
+  showToast('🔄 Pushing data...','#d29922');
+
+  try {
+    // Push each section separately to avoid 400 payload limit
+    const sections = [
+      { path: 'hr/meta',     data: { pushedAt: new Date().toISOString(), staffCount: staffList.length, version:'2.0' } },
+      { path: 'hr/projects', data: Object.fromEntries(projectList.map(p=>[(p.id||'p').replace(/[.#$[\]]/g,'-'), p])) },
+      { path: 'hr/leave',    data: Object.fromEntries(leaveList.map((l,i)=>['lv'+i, l])) },
+      { path: 'hr/ot',       data: Object.fromEntries(otList.map((o,i)=>['ot'+i, o])) },
+      { path: 'hr/users',    data: Object.fromEntries(userList.map((u,i)=>['u'+i, u])) },
+    ];
+
+    // Push staff in batches of 20
+    const batchSize = 20;
+    for(let i = 0; i < staffList.length; i += batchSize) {
+      const batch = staffList.slice(i, i + batchSize);
+      const batchObj = Object.fromEntries(batch.map(s => [(s.id||'s').replace(/[.#$[\]]/g,'-'), s]));
+      sections.push({ path: 'hr/staff', data: batchObj, method: 'PATCH' });
+    }
+
+    // Push attendance by date (each date separately)
+    const attDates = Object.keys(attendanceData || {});
+    for(const date of attDates) {
+      sections.push({ path: 'hr/attendance/' + date, data: attendanceData[date] });
+    }
+
+    let done = 0;
+    for(const sec of sections) {
+      const url  = dbUrl + '/' + sec.path + '.json' + auth;
+      const method = sec.method || 'PUT';
+      const res  = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sec.data)
+      });
+      if(!res.ok) {
+        const txt = await res.text();
+        throw new Error('HTTP ' + res.status + ' on ' + sec.path + ': ' + txt.slice(0,80));
+      }
+      done++;
+    }
+
+    fbConfig.connected = true; lsSet('hr_fb', fbConfig);
+    updateGsStatus();
+    showToast('✅ Push OK! ' + staffList.length + ' staff, ' + attDates.length + ' days att.');
+    showSyncInfo('✅ Push ' + new Date().toLocaleTimeString());
+  } catch(e) {
+    showToast('❌ Push Error: ' + e.message.slice(0,100), '#f85149');
+    showSyncInfo('❌ ' + e.message.slice(0,60));
+  }
+}
+
 // ====== STATE ======
 // Safe localStorage — works in sandbox/Artifact too
 function lsGet(key,def){try{var v=localStorage.getItem(key);return v?JSON.parse(v):def;}catch(e){return def;}}
