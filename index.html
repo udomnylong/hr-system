@@ -2,7 +2,59 @@
 <html lang="km">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewpor
+
+// ════════════════════════════════════════════════
+// FIREBASE REALTIME DB — REST API Helpers
+// ════════════════════════════════════════════════
+function fbUrl(path) {
+  return fbConfig.dbUrl.replace(/\/+$/, '') + '/' + path + '.json' +
+    (fbConfig.apiKey ? '?auth=' + fbConfig.apiKey : '');
+}
+async function fbGet(path) {
+  const res = await fetch(fbUrl(path));
+  if(!res.ok) throw new Error('Firebase GET ' + res.status);
+  return await res.json();
+}
+async function fbPut(path, data) {
+  const res = await fetch(fbUrl(path), {
+    method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
+  });
+  if(!res.ok) throw new Error('Firebase PUT ' + res.status);
+  return await res.json();
+}
+async function fbPatch(path, data) {
+  const res = await fetch(fbUrl(path), {
+    method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
+  });
+  if(!res.ok) throw new Error('Firebase PATCH ' + res.status);
+  return await res.json();
+}
+async function fbDelete(path) {
+  const res = await fetch(fbUrl(path), { method:'DELETE' });
+  if(!res.ok) throw new Error('Firebase DELETE ' + res.status);
+  return true;
+}
+async function fbCheckIn(date, sid, sname, pid, timeIn) {
+  const key = sid.replace(/[.#$[\]]/g, '-');
+  await fbPatch('hr/attendance/' + date + '/' + key,
+    { timeIn, pid: pid||'', name: sname });
+}
+async function fbCheckOut(date, sid, timeOut) {
+  const key = sid.replace(/[.#$[\]]/g, '-');
+  await fbPatch('hr/attendance/' + date + '/' + key, { timeOut });
+}
+
+async function testFirebaseUrl(url, apiKey) {
+  try {
+    const testUrl = url.replace(/\/+$/, '') + '/.json' + (apiKey ? '?auth=' + apiKey : '');
+    const res = await fetch(testUrl);
+    return res.ok || res.status === 404; // 404 = empty DB = still valid
+  } catch(e) {
+    return false; // CORS or network error
+  }
+}
+t" content="width=device-width, initial-scale=1.0">
 <title>LHB HR Management System</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Khmer:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -372,22 +424,56 @@
         <span class="gs-dot-sm"></span>
         <span id="gsStatusLabel">មិនទាន់ភ្ជាប់</span>
       </div>
-      <br>
-      <label>📋 Apps Script Web App URL</label>
-      <input type="text" id="loginGsUrl" placeholder="https://script.google.com/macros/s/.../exec"
-             oninput="onGsUrlInput(this.value)">
-      <div style="display:flex;gap:8px">
-        <button onclick="testAndSaveGsUrl()" style="flex:1;padding:8px;background:var(--accent);color:#0d1117;border:none;border-radius:7px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;">
-          🔍 Test &amp; Save
+
+      <!-- DB Mode Toggle -->
+      <div style="display:flex;gap:8px;margin:10px 0 12px">
+        <button id="btnDbGs" onclick="setDb('gs')"
+          style="flex:1;padding:6px;font-size:11px;border-radius:6px;border:1px solid var(--accent2);background:rgba(0,153,255,.15);color:var(--accent2);cursor:pointer;font-family:inherit">
+          📊 Google Sheet
         </button>
-        <button onclick="clearGsUrl()" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);color:var(--text2);border-radius:7px;font-family:inherit;font-size:12px;cursor:pointer;">
-          🗑️
+        <button id="btnDbFb" onclick="setDb('fb')"
+          style="flex:1;padding:6px;font-size:11px;border-radius:6px;border:1px solid #ff6d00;background:rgba(255,109,0,.08);color:#ff6d00;cursor:pointer;font-family:inherit">
+          🔥 Firebase
         </button>
       </div>
-      <p style="font-size:10px;color:var(--text2);margin-top:8px;line-height:1.6">
-        💡 Paste URL ពី Google Apps Script → Deploy → Web App<br>
-        បន្ទាប់ពី Save → User List នឹង Load ពី Google Sheet Tab "User"
-      </p>
+
+      <!-- Google Sheet Section -->
+      <div id="gsSetupArea">
+        <label style="font-size:11px;color:var(--text2)">📋 Apps Script Web App URL</label>
+        <input type="text" id="loginGsUrl" placeholder="https://script.google.com/macros/s/.../exec"
+               oninput="onGsUrlInput(this.value)">
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <button onclick="testAndSaveGsUrl()" style="flex:1;padding:8px;background:var(--accent);color:#0d1117;border:none;border-radius:7px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;">
+            🔍 Test &amp; Save
+          </button>
+          <button onclick="clearGsUrl()" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);color:var(--text2);border-radius:7px;font-family:inherit;font-size:12px;cursor:pointer;">
+            🗑️
+          </button>
+        </div>
+        <p style="font-size:10px;color:var(--text2);margin-top:8px;line-height:1.6">
+          💡 Paste URL ពី Google Apps Script → Deploy → Web App
+        </p>
+      </div>
+
+      <!-- Firebase Section -->
+      <div id="fbSetupArea" style="display:none">
+        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">🔥 Firebase Database URL</label>
+        <input type="text" id="loginFbUrl"
+               placeholder="https://lhn-hr-system-default-rtdb.asia-southeast1.firebasedatabase.app"
+               style="font-size:12px">
+        <label style="font-size:11px;color:var(--text2);display:block;margin:8px 0 4px">🔑 Database Secret (optional)</label>
+        <input type="password" id="loginFbKey" placeholder="Leave empty — Test Mode OK"
+               style="font-size:12px">
+        <button onclick="testAndSaveFbUrl()"
+          style="width:100%;padding:8px;margin-top:8px;background:#ff6d00;color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600">
+          🔥 Test &amp; Save Firebase
+        </button>
+        <div id="fbStatus" style="font-size:11px;color:var(--text2);margin-top:6px;text-align:center"></div>
+        <p style="font-size:10px;color:var(--text2);margin-top:8px;line-height:1.6">
+          💡 Firebase Console → Realtime Database → Copy URL<br>
+          Rules: &#123;".read":true,".write":true&#125;
+        </p>
+      </div>
     </div>
   </div>
 </div>
@@ -436,8 +522,8 @@
       <h1 id="pageTitle">Dashboard</h1>
       <div class="topbar-actions">
         <span id="syncInfo" style="font-size:11px;color:var(--text2);white-space:nowrap"></span>
-        <button class="sync-btn" onclick="pullFromGoogleSheet()" style="color:#0099ff;border-color:rgba(0,153,255,.35)" title="Pull: Google Sheet → WebApp">⬇️ Pull GS</button>
-        <button class="sync-btn" onclick="syncToGoogleSheet()" title="Push: WebApp → Google Sheet"><span id="syncIcon">⬆️</span> Push GS</button>
+        <button class="sync-btn" id="btnPullDB" onclick="smartPull()" style="color:#0099ff;border-color:rgba(0,153,255,.35)" title="Pull from Database">⬇️ Pull</button>
+        <button class="sync-btn" id="btnPushDB" onclick="smartPush()" title="Push to Database">⬆️ Push</button>
         <div class="gs-status" onclick="openGsModal()">
           <div class="gs-dot" id="gsDot"></div>
           <span id="gsStatusText">Google Sheet</span>
@@ -1059,6 +1145,8 @@ let leaveList      = lsGet('hr_leave',[]);
 let otList         = lsGet('hr_ot',[]);
 let deptList       = lsGet('hr_dept',[]);
 let gsConfig       = lsGet('hr_gs',{sheetId:'',scriptUrl:'',connected:false});
+let fbConfig       = lsGet('hr_fb',{dbUrl:'',apiKey:'',connected:false});
+let useFirebase    = lsGet('hr_use_fb', false);
 let userList       = lsGet('hr_users',[]);
 let projectList    = lsGet('hr_projects',[]);
 let currentUser    = null; // { name, permission }
@@ -1245,6 +1333,10 @@ function save() {
   lsSet('hr_gs',       gsConfig);
   lsSet('hr_users',    userList);
   lsSet('hr_projects', projectList);
+  // Firebase auto-sync on save (non-blocking)
+  if(useFirebase && fbConfig.connected && fbConfig.dbUrl) {
+    fbPushAll().catch(function(){});
+  }
 }
 
 // ====== PERMISSION HELPERS ======
@@ -1319,6 +1411,91 @@ function onGsUrlInput(val) {
   // Auto-detect if looks like valid script URL
   const valid = val.includes('script.google.com/macros/s/') && val.includes('/exec');
   document.getElementById('loginGsUrl').style.borderColor = val === '' ? '' : valid ? 'var(--accent)' : 'var(--danger)';
+}
+
+// ── Switch Database Mode ──
+function setDb(mode) {
+  useFirebase = (mode === 'fb');
+  lsSet('hr_use_fb', useFirebase);
+  document.getElementById('fbSetupArea').style.display = useFirebase ? 'block' : 'none';
+  document.getElementById('btnDbGs').style.opacity = useFirebase ? '0.5' : '1';
+  document.getElementById('btnDbFb').style.opacity = useFirebase ? '1' : '0.5';
+  updateGsStatus();
+}
+
+// ── Test & Save Firebase URL ──
+async function testAndSaveFbUrl() {
+  const url    = document.getElementById('loginFbUrl').value.trim();
+  const apiKey = document.getElementById('loginFbKey').value.trim();
+  const status = document.getElementById('fbStatus');
+
+  if(!url) {
+    status.textContent = '❌ បញ្ចូល Firebase URL!';
+    status.style.color = '#f85149'; return;
+  }
+
+  // Accept both old (.firebaseio.com) and new (.firebasedatabase.app) URL formats
+  const validFb = url.includes('firebaseio.com') || url.includes('firebasedatabase.app');
+  if(!validFb) {
+    status.textContent = '❌ URL ខុស! គួរតែ: ...firebasedatabase.app';
+    status.style.color = '#f85149'; return;
+  }
+
+  // Clean URL — remove trailing slash
+  const cleanUrl = url.replace(/\/+$/, '');
+  status.textContent = '🔄 Testing connection...';
+  status.style.color = '#d29922';
+
+  // Check if running as local file (file://) — CORS will block fetch
+  const isLocalFile = window.location.protocol === 'file:';
+
+  if(isLocalFile) {
+    // Cannot test via fetch from local file — just save and trust user
+    fbConfig = { dbUrl: cleanUrl, apiKey: apiKey, connected: true };
+    lsSet('hr_fb', fbConfig);
+    useFirebase = true;
+    lsSet('hr_use_fb', true);
+    status.innerHTML = '✅ URL Saved! (បើក via GitHub Pages ដើម្បី test connection)<br>' +
+      '<small style="color:#d29922">⚠️ file:// mode — CORS blocks fetch test</small>';
+    status.style.color = '#3fb950';
+    updateGsStatus();
+    const lbl = document.getElementById('gsSetupLabel');
+    if(lbl) { lbl.textContent = '🔥 Firebase: URL Saved'; lbl.style.color = '#d29922'; }
+    return;
+  }
+
+  // Online mode — test with fetch
+  try {
+    const testUrl = cleanUrl + '/.json' + (apiKey ? '?auth=' + apiKey : '');
+    const res = await fetch(testUrl, { method: 'GET' });
+    // 200 = connected with data, 404 = empty DB (still connected!), 401 = need auth
+    if(res.ok || res.status === 404) {
+      fbConfig = { dbUrl: cleanUrl, apiKey: apiKey, connected: true };
+      lsSet('hr_fb', fbConfig);
+      useFirebase = true;
+      lsSet('hr_use_fb', true);
+      status.textContent = '✅ Firebase Connected! Status: ' + res.status;
+      status.style.color = '#3fb950';
+      updateGsStatus();
+      const lbl = document.getElementById('gsSetupLabel');
+      if(lbl) { lbl.textContent = '🔥 Firebase: Connected ✓'; lbl.style.color = '#3fb950'; }
+    } else if(res.status === 401) {
+      status.innerHTML = '❌ Permission Denied (401)<br><small>Firebase Rules: set ".read":true, ".write":true</small>';
+      status.style.color = '#f85149';
+    } else {
+      status.textContent = '❌ Error: HTTP ' + res.status;
+      status.style.color = '#f85149';
+    }
+  } catch(e) {
+    // Network error or CORS
+    if(e.message && e.message.includes('fetch')) {
+      status.innerHTML = '❌ CORS Error — ប្រើ GitHub Pages URL ជំនួស file://<br>' +
+        '<small style="color:#d29922">Upload to GitHub Pages first!</small>';
+    } else {
+      status.textContent = '❌ ' + e.message;
+    }
+    status.style.color = '#f85149';
+  }
 }
 
 async function testAndSaveGsUrl() {
@@ -1532,7 +1709,8 @@ function showPage(p, el) {
     attEl.value = saved || new Date().toISOString().slice(0,10);
     if(!saved) lsSet('hr_att_date', attEl.value);
     renderAttendance();
-    if(gsConfig.connected && gsConfig.scriptUrl) setTimeout(pullAttendanceFromGS, 400);
+    if(!useFirebase && gsConfig.connected && gsConfig.scriptUrl) setTimeout(pullAttendanceFromGS, 400);
+    if(useFirebase  && fbConfig.connected  && fbConfig.dbUrl) setTimeout(fbPullAll, 400);
   }
   if(p==='structure')  renderOrgChart();
   if(p==='payroll')    renderPayroll();
@@ -2394,6 +2572,16 @@ function calculatePayroll() {
   showToast('✅ គណនារួច | NET Total: $'+totalNet.toFixed(2));
 }
 
+function updateSlipStaffSelect() {
+  const sel = document.getElementById('slipStaff');
+  if(!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">-- ជ្រើសបុគ្គលិក --</option>' +
+    staffList.map(s =>
+      '<option value="'+s.id+'"'+(s.id===current?' selected':'')+'>'+s.name+' ('+s.id+')</option>'
+    ).join('');
+}
+
 function generatePayslip() {
   const sid   = document.getElementById('slipStaff').value;
   const month = document.getElementById('slipMonth').value;
@@ -2532,15 +2720,28 @@ function printPayslip() {
 
 // ====== GOOGLE SHEET — TWO-WAY SYNC (CORS-FREE) ======
 
+// ── Smart Pull/Push: route to Firebase or GS ──
+function smartPull() {
+  if(useFirebase) { fbPullAll(); }
+  else { pullFromGoogleSheet(); }
+}
+function smartPush() {
+  if(useFirebase) { fbPushAll(); }
+  else { syncToGoogleSheet(); }
+}
+
 function updateGsStatus() {
   const dot = document.getElementById('gsDot');
   const txt = document.getElementById('gsStatusText');
-  if(gsConfig.connected && gsConfig.scriptUrl) {
+  if(useFirebase && fbConfig.connected && fbConfig.dbUrl) {
     dot.classList.add('connected');
-    txt.textContent = 'Connected ✓';
+    txt.textContent = '🔥 Firebase ✓';
+  } else if(!useFirebase && gsConfig.connected && gsConfig.scriptUrl) {
+    dot.classList.add('connected');
+    txt.textContent = 'GS Connected ✓';
   } else {
     dot.classList.remove('connected');
-    txt.textContent = 'Not Connected';
+    txt.textContent = useFirebase ? '🔥 Firebase' : 'Not Connected';
   }
 }
 
@@ -3566,3 +3767,30 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
 
+      <!-- Firebase Section -->
+      <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <span style="font-size:12px;color:var(--text2)">Database:</span>
+          <button onclick="setDb('gs')" id="btnDbGs"
+            style="padding:4px 12px;font-size:11px;border-radius:6px;border:1px solid var(--accent2);background:rgba(0,153,255,.15);color:var(--accent2);cursor:pointer">
+            📊 Google Sheet
+          </button>
+          <button onclick="setDb('fb')" id="btnDbFb"
+            style="padding:4px 12px;font-size:11px;border-radius:6px;border:1px solid #ff6d00;background:rgba(255,109,0,.1);color:#ff6d00;cursor:pointer">
+            🔥 Firebase
+          </button>
+        </div>
+        <div id="fbSetupArea" style="display:none">
+          <label style="font-size:12px;color:var(--text2)">🔥 Firebase Database URL</label>
+          <input type="text" id="loginFbUrl" placeholder="https://your-project-default-rtdb.firebaseio.com"
+                 style="width:100%;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;margin:4px 0">
+          <label style="font-size:12px;color:var(--text2);margin-top:6px;display:block">🔑 Database Secret (optional, for private DB)</label>
+          <input type="password" id="loginFbKey" placeholder="Leave empty if DB rules = public"
+                 style="width:100%;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;margin:4px 0">
+          <button onclick="testAndSaveFbUrl()"
+            style="width:100%;padding:8px;background:#ff6d00;color:#fff;border:none;border-radius:7px;cursor:pointer;margin-top:6px;font-size:12px">
+            🔥 Test & Save Firebase
+          </button>
+          <div id="fbStatus" style="font-size:11px;color:var(--text2);margin-top:6px;text-align:center"></div>
+        </div>
+      </div>
