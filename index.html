@@ -2641,6 +2641,18 @@ function calculatePayroll() {
   showToast('✅ គណនារួច | NET Total: $'+totalNet.toFixed(2));
 }
 
+function updateSlipStaffSelect() {
+  const sel = document.getElementById('slipStaff');
+  if(!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">-- ជ្រើសបុគ្គលិក --</option>' +
+    staffList.map(s =>
+      '<option value="'+s.id+'"'+(s.id===cur?' selected':'')+'>'+
+      s.name+' ('+s.id+')</option>'
+    ).join('');
+  if(cur) sel.value = cur;
+}
+
 function generatePayslip() {
   const sid   = document.getElementById('slipStaff').value;
   const month = document.getElementById('slipMonth').value;
