@@ -35,6 +35,31 @@ async function fbDelete(path) {
   if(!res.ok) throw new Error('Firebase DELETE ' + res.status);
   return true;
 }
+// ── Firebase Real-time Attendance Watch ──
+let _fbWatcher = null;
+async function fbWatchAttendance(date) {
+  // Firebase REST doesn't support WebSocket — use polling every 30s
+  if(_fbWatcher) clearInterval(_fbWatcher);
+  _fbWatcher = setInterval(async () => {
+    if(!useFirebase || !fbConfig.connected) return;
+    try {
+      const data = await fbGet('hr/attendance/' + date);
+      if(data) {
+        attendanceData[date] = data;
+        lsSet('hr_att', attendanceData);
+        renderDashboard();
+        renderAttendance();
+        // Flash sync badge
+        const si = document.getElementById('syncInfo');
+        if(si) si.textContent = '⚡ Live: ' + new Date().toLocaleTimeString();
+      }
+    } catch(e) {}
+  }, 30000); // every 30 seconds
+}
+function fbStopWatch() {
+  if(_fbWatcher) { clearInterval(_fbWatcher); _fbWatcher = null; }
+}
+
 async function fbCheckIn(date, sid, sname, pid, timeIn) {
   const key = sid.replace(/[.#$[\]]/g, '-');
   await fbPatch('hr/attendance/' + date + '/' + key,
@@ -471,8 +496,18 @@ t" content="width=device-width, initial-scale=1.0">
         <div id="fbStatus" style="font-size:11px;color:var(--text2);margin-top:6px;text-align:center"></div>
         <p style="font-size:10px;color:var(--text2);margin-top:8px;line-height:1.6">
           💡 Firebase Console → Realtime Database → Copy URL<br>
-          Rules: &#123;".read":true,".write":true&#125;
+          Rules: &#123;".read":true,".write":true&#125; (Test Mode)
         </p>
+        <div style="background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.25);border-radius:6px;padding:8px 10px;margin-top:8px">
+          <p style="font-size:10px;color:#f85149;margin:0 0 4px;font-weight:600">🔒 Secure Rules (Production)</p>
+          <p style="font-size:9px;color:var(--text2);margin:0;line-height:1.5;font-family:monospace">
+            &#123;"rules":&#123;<br>
+            &nbsp;&nbsp;".read":"auth != null",<br>
+            &nbsp;&nbsp;".write":"auth != null"<br>
+            &#125;&#125;
+          </p>
+          <p style="font-size:9px;color:var(--text2);margin:4px 0 0">⚠️ Secure rules ត្រូវការ Firebase Auth setup</p>
+        </div>
       </div>
     </div>
   </div>
@@ -521,7 +556,7 @@ t" content="width=device-width, initial-scale=1.0">
     <div class="topbar">
       <h1 id="pageTitle">Dashboard</h1>
       <div class="topbar-actions">
-        <span id="syncInfo" style="font-size:11px;color:var(--text2);white-space:nowrap"></span>
+        <span id="syncInfo" style="font-size:11px;color:var(--text2);white-space:nowrap"></span><span id="autoSyncBadge" style="display:none;font-size:10px;background:rgba(0,212,170,.15);color:var(--accent);border:1px solid rgba(0,212,170,.3);border-radius:10px;padding:2px 8px;margin-left:6px">🔄 Auto 5m</span>
         <button class="sync-btn" id="btnPullDB" onclick="smartPull()" style="color:#0099ff;border-color:rgba(0,153,255,.35)" title="Pull from Database">⬇️ Pull</button>
         <button class="sync-btn" id="btnPushDB" onclick="smartPush()" title="Push to Database">⬆️ Push</button>
         <div class="gs-status" onclick="openGsModal()">
@@ -1635,6 +1670,33 @@ window.addEventListener('DOMContentLoaded', () => {
 document.getElementById('loginPass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 
 // ====== INIT ======
+// ── Auto-Sync Timer ──
+let _autoSyncTimer = null;
+function startAutoSync(intervalMin) {
+  stopAutoSync();
+  const ms = (intervalMin || 5) * 60 * 1000;
+  const badge = document.getElementById('autoSyncBadge');
+  if(badge) badge.style.display = 'inline';
+  _autoSyncTimer = setInterval(async () => {
+    if(!document.getElementById('app') || document.getElementById('app').style.display==='none') return;
+    try {
+      if(useFirebase && fbConfig.connected && fbConfig.dbUrl) {
+        await fbPullAll();
+        showSyncInfo('🔄 Auto-sync: ' + new Date().toLocaleTimeString());
+      } else if(!useFirebase && gsConfig.connected && gsConfig.scriptUrl) {
+        await pullFromGoogleSheet();
+        showSyncInfo('🔄 Auto-sync: ' + new Date().toLocaleTimeString());
+      }
+    } catch(e) { console.warn('Auto-sync error:', e); }
+  }, ms);
+  console.log('Auto-sync started every', intervalMin, 'min');
+}
+function stopAutoSync() {
+  if(_autoSyncTimer) { clearInterval(_autoSyncTimer); _autoSyncTimer = null; }
+  const badge2 = document.getElementById('autoSyncBadge');
+  if(badge2) badge2.style.display = 'none';
+}
+
 function initApp() {
   if(staffList.length===0) seedData();
   updateGsStatus();
@@ -1692,6 +1754,8 @@ function showPage(p, el) {
   document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
   // Auto close sidebar on mobile after selecting page
   if(window.innerWidth <= 768) closeMobileMenu();
+  // Stop attendance live-watch when leaving attendance page
+  if(p !== 'attendance') fbStopWatch();
   const pageEl = document.getElementById('page-'+p);
   if(!pageEl) { console.warn('Page not found: page-'+p); return; }
   pageEl.classList.add('active');
@@ -1710,7 +1774,10 @@ function showPage(p, el) {
     if(!saved) lsSet('hr_att_date', attEl.value);
     renderAttendance();
     if(!useFirebase && gsConfig.connected && gsConfig.scriptUrl) setTimeout(pullAttendanceFromGS, 400);
-    if(useFirebase  && fbConfig.connected  && fbConfig.dbUrl) setTimeout(fbPullAll, 400);
+    if(useFirebase  && fbConfig.connected  && fbConfig.dbUrl) {
+      setTimeout(fbPullAll, 400);
+      fbWatchAttendance(attEl.value); // start 30s live watch
+    }
   }
   if(p==='structure')  renderOrgChart();
   if(p==='payroll')    renderPayroll();
